@@ -3,6 +3,9 @@ package pubsub
 import (
 	"context"
 	"log"
+	"sync"
+
+	"github.com/google/uuid"
 )
 
 // Router provides pubsub behavior by exposing Publish and Subscribe methods.
@@ -11,10 +14,10 @@ import (
 // 1. There's no "runner" goroutine. One goroutine per subscriber, but no extra one.
 // 2. The relevant channels are made by the Router struct. In contrast, the consumer provdides subscriber channels for the runner.
 // 3. Publishing blocks until fanout is complete.
-//
-// For now, the subscribers list must be static, but I think this architecture gives us a good opportunity to fix that.
+// 4. "Self-healing". If one subscriber exits, we can still publish to other active subscribers.
+//   - This is still flaky, and not fully robust. We'll need to use something better than sync.Map for that.
 type Router struct {
-	subscribers []chan<- string
+	subscribers sync.Map
 }
 
 // Subscribe registers the provided listener as a subscriber to future published messages.
@@ -22,20 +25,29 @@ type Router struct {
 // Subscribe spawns a goroutine that lives as long as the listener.
 func (ps *Router) Subscribe(listener func(<-chan string)) {
 	subCh := make(chan string)
-	ps.subscribers = append(ps.subscribers, subCh)
+	id := uuid.New()
+	ps.subscribers.Store(id, (chan<- string)(subCh))
 
-	go listener(subCh)
-	log.Printf("Added subscriber #%d", len(ps.subscribers))
+	go func() {
+		listener(subCh)
+		ps.subscribers.Delete(id)
+		log.Printf("Removed subscriber %s", id)
+	}()
+	log.Printf("Added subscriber %s", id)
 }
 
 // Publish sends the provided message to all active subscribers.
 func (ps *Router) Publish(ctx context.Context, msg string) error {
-	for _, sub := range ps.subscribers {
+	var err error
+	ps.subscribers.Range(func(_, value any) bool {
+		sub := value.(chan<- string)
 		select {
 		case sub <- msg:
 		case <-ctx.Done():
-			return ctx.Err()
+			err = ctx.Err()
+			return false
 		}
-	}
-	return nil
+		return true
+	})
+	return err
 }
