@@ -16,31 +16,31 @@ import (
 // 3. Publishing blocks until fanout is complete.
 // 4. "Self-healing". If one subscriber exits, we can still publish to other active subscribers.
 //   - This is still flaky, and not fully robust. We'll need to use something better than sync.Map for that.
-type Router struct {
+type Router[T any] struct {
 	mu          sync.RWMutex
-	subscribers map[uuid.UUID]*subscriber
+	subscribers map[uuid.UUID]*subscriber[T]
 }
 
-type subscriber struct {
-	data chan<- string
+type subscriber[T any] struct {
+	data chan<- T
 	done <-chan struct{}
 }
 
 // Subscribe registers the provided listener as a subscriber to future published messages.
 //
 // Subscribe spawns a goroutine that lives as long as the listener.
-func (ps *Router) Subscribe(listener func(<-chan string)) {
+func (ps *Router[T]) Subscribe(listener func(<-chan T)) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	if ps.subscribers == nil {
-		ps.subscribers = make(map[uuid.UUID]*subscriber)
+		ps.subscribers = make(map[uuid.UUID]*subscriber[T])
 	}
-	subCh := make(chan string)
+	subCh := make(chan T)
 	// Done channel is buffered because we know there will be at most one message in the channel.
 	// Writing to the channel can be fast. We shouldn't block, as there may never be a receiver of the message.
 	doneCh := make(chan struct{}, 1)
 	id := uuid.New()
-	ps.subscribers[id] = &subscriber{
+	ps.subscribers[id] = &subscriber[T]{
 		data: subCh,
 		done: doneCh,
 	}
@@ -52,7 +52,7 @@ func (ps *Router) Subscribe(listener func(<-chan string)) {
 	log.Printf("Added subscriber %s", id)
 }
 
-func (ps *Router) removeSubscriber(id uuid.UUID, doneCh chan<- struct{}) {
+func (ps *Router[T]) removeSubscriber(id uuid.UUID, doneCh chan<- struct{}) {
 	// Writing to the doneCh doesn't need to be in any lock, due to the inherent thread-safety of channels.
 	// I don't _think_ it would be too harmful to put this inside the lock,
 	// but it doesn't hurt to get the removal info out into the fanout loop more eagerly.
@@ -67,7 +67,7 @@ func (ps *Router) removeSubscriber(id uuid.UUID, doneCh chan<- struct{}) {
 }
 
 // Publish sends the provided message to all active subscribers.
-func (ps *Router) Publish(ctx context.Context, msg string) error {
+func (ps *Router[T]) Publish(ctx context.Context, msg T) error {
 	// Make a read-only copy of the subscribers list. This means that during fanout, we will ignore any new subscribers,
 	// but subscribers _can_ be removed during fanout, due to our use of the done channel.
 	subs := ps.cloneSubscribers()
@@ -86,9 +86,9 @@ func (ps *Router) Publish(ctx context.Context, msg string) error {
 	return nil
 }
 
-func (ps *Router) cloneSubscribers() map[uuid.UUID]*subscriber {
+func (ps *Router[T]) cloneSubscribers() map[uuid.UUID]*subscriber[T] {
 	ps.mu.RLock()
-	subs := make(map[uuid.UUID]*subscriber, len(ps.subscribers))
+	subs := make(map[uuid.UUID]*subscriber[T], len(ps.subscribers))
 	for id, sub := range ps.subscribers {
 		subs[id] = sub
 	}

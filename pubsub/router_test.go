@@ -32,7 +32,7 @@ func TestRouter(t *testing.T) {
 
 			wg := sync.WaitGroup{}
 
-			ps := &Router{}
+			ps := &Router[string]{}
 			received := make([][]string, tc.numSubs)
 			for i := 0; i < tc.numSubs; i++ {
 				i := i
@@ -85,7 +85,7 @@ func TestRouter_EarlyExit(t *testing.T) {
 	numMessages := 10
 	wg := sync.WaitGroup{}
 
-	ps := &Router{}
+	ps := &Router[string]{}
 	received := make([]string, 0, numMessages)
 	wg.Add(1)
 	ps.Subscribe(func(ch <-chan string) {
@@ -102,7 +102,6 @@ func TestRouter_EarlyExit(t *testing.T) {
 
 	// This subscriber exits after receiving the first message
 	wg.Add(1)
-
 	ps.Subscribe(func(ch <-chan string) {
 		defer wg.Done()
 		select {
