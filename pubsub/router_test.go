@@ -79,7 +79,6 @@ func TestRouter(t *testing.T) {
 }
 
 func TestRouter_EarlyExit(t *testing.T) {
-	t.Skip("Unlike with the runner implementation, this passes often, but it's flaky.")
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 

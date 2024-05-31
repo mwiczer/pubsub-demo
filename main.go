@@ -12,7 +12,7 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	ps := &pubsub.Router{}
@@ -40,6 +40,7 @@ func main() {
 	wg.Add(1)
 	ps.Subscribe(func(ch <-chan string) {
 		defer wg.Done()
+		time.Sleep(100 * time.Millisecond)
 		select {
 		case msg := <-ch:
 			log.Printf("Received message on sub2: %q", msg)
@@ -47,9 +48,22 @@ func main() {
 			log.Printf("Exiting listener 2: %v", ctx.Err())
 			return
 		}
+		log.Printf("Spawning nested listener")
+		wg.Add(1)
+		ps.Subscribe(func(ch <-chan string) {
+			wg.Done()
+			time.Sleep(100 * time.Millisecond)
+			select {
+			case msg := <-ch:
+				log.Printf("Received message on nested subscriber: %q", msg)
+			case <-ctx.Done():
+				log.Printf("Exiting nested listener: %v", ctx.Err())
+				return
+			}
+		})
 		// Return after the first message is received.
-		// We see that this breaks the other subscriber,
-		// which is probably not the behavior we want
+		// This no longer breaks the other subscriber,
+		log.Printf("Exiting listener 2.")
 	})
 
 	// Publish the messages
