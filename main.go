@@ -42,15 +42,16 @@ func main() {
 	wg.Add(1)
 	go func(ctx context.Context) {
 		defer wg.Done()
-		for {
-			select {
-			case msg := <-subCh2:
-				log.Printf("Received message on sub2: %q", msg)
-			case <-ctx.Done():
-				log.Printf("Exiting listener 2: %v", ctx.Err())
-				return
-			}
+		select {
+		case msg := <-subCh2:
+			log.Printf("Received message on sub2: %q", msg)
+		case <-ctx.Done():
+			log.Printf("Exiting listener 2: %v", ctx.Err())
+			return
 		}
+		// Return after the first message is received.
+		// We see that this breaks the other subscriber,
+		// which is probably not the behavior we want
 	}(ctx)
 
 	// Publish the messages

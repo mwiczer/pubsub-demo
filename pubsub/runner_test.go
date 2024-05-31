@@ -3,8 +3,10 @@ package pubsub
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -75,5 +77,67 @@ func TestRunPubSub(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRunPubSub_EarlyExit(t *testing.T) {
+	t.Skip("The runner implementation does not support a subscriber returning early. Un-skip this test to observe its failure.")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	numMessages := 10
+	subEarlyExit := make(chan string)
+	subscribeToAll := make(chan string)
+
+	wg := sync.WaitGroup{}
+
+	received := make([]string, 0, numMessages)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case msg := <-subscribeToAll:
+				received = append(received, msg)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// This subscriber exits after receiving the first message
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		select {
+		case msg := <-subEarlyExit:
+			log.Printf("Second subscriber exiting after receiving message %q", msg)
+		case <-ctx.Done():
+		}
+	}()
+
+	pubCh, doneCh := RunPubSub(ctx, subEarlyExit, subscribeToAll)
+	published := make([]string, 0, numMessages)
+PublishLoop:
+	for i := 0; i < numMessages; i++ {
+		msg := fmt.Sprintf("Message #%d", i)
+		select {
+		case pubCh <- msg:
+		case <-ctx.Done():
+			t.Errorf("Context ended before publishing message #%d: %v", i, ctx.Err())
+			break PublishLoop
+		}
+		published = append(published, msg)
+	}
+	close(pubCh)
+	<-doneCh
+	cancel()
+	wg.Wait()
+
+	if recvd := len(received); recvd != numMessages {
+		t.Errorf("Receiver received %d messages; want %d", recvd, numMessages)
+	}
+	if diff := cmp.Diff(published, received); diff != "" {
+		t.Errorf("Receiver did not receive the published messages (-want +got)\n%s", diff)
 	}
 }
