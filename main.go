@@ -15,19 +15,19 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	ps := &pubsub.Router{}
+	ps := &pubsub.Router[int]{}
 
 	// Use the WaitGroup so make sure we don't exit the binary until the subscribers have successfully processed any context cancellation signal.
 	wg := sync.WaitGroup{}
 
 	// Listen for messages
 	wg.Add(1)
-	ps.Subscribe(func(ch <-chan string) {
+	ps.Subscribe(func(ch <-chan int) {
 		defer wg.Done()
 		for {
 			select {
 			case msg := <-ch:
-				log.Printf("Received message on sub1: %q", msg)
+				log.Printf("Received message on sub1: %d", msg)
 			case <-ctx.Done():
 				log.Printf("Exiting listener 1: %v", ctx.Err())
 				return
@@ -38,24 +38,24 @@ func main() {
 
 	// Listen for messages
 	wg.Add(1)
-	ps.Subscribe(func(ch <-chan string) {
+	ps.Subscribe(func(ch <-chan int) {
 		defer wg.Done()
 		time.Sleep(100 * time.Millisecond)
 		select {
 		case msg := <-ch:
-			log.Printf("Received message on sub2: %q", msg)
+			log.Printf("Received message on sub2: %d", msg)
 		case <-ctx.Done():
 			log.Printf("Exiting listener 2: %v", ctx.Err())
 			return
 		}
 		log.Printf("Spawning nested listener")
 		wg.Add(1)
-		ps.Subscribe(func(ch <-chan string) {
+		ps.Subscribe(func(ch <-chan int) {
 			wg.Done()
 			time.Sleep(100 * time.Millisecond)
 			select {
 			case msg := <-ch:
-				log.Printf("Received message on nested subscriber: %q", msg)
+				log.Printf("Received message on nested subscriber: %d", msg)
 			case <-ctx.Done():
 				log.Printf("Exiting nested listener: %v", ctx.Err())
 				return
@@ -67,8 +67,8 @@ func main() {
 	})
 
 	// Publish the messages
-	messages := []string{
-		"foo", "bar", "baz", "abc", "def",
+	messages := []int{
+		999, 99, 9, 111, 123,
 	}
 	for i, msg := range messages {
 		log.Printf("Sending message %d...", i)

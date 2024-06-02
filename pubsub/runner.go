@@ -6,16 +6,16 @@ import (
 	"log"
 )
 
-type pubSubRunner struct {
+type pubSubRunner[T any] struct {
 	// Arrows in the type annotation protect us from accidentally writing back into the Publisher
-	Publisher   <-chan string
-	Subscribers []chan<- string
+	Publisher   <-chan T
+	Subscribers []chan<- T
 }
 
-func (ps pubSubRunner) Run(ctx context.Context) {
+func (ps pubSubRunner[T]) Run(ctx context.Context) {
 	i := 0
 	for {
-		var msg string
+		var msg T
 		// Receive from publisher
 		select {
 		case m, ok := <-ps.Publisher:
@@ -50,9 +50,9 @@ func (ps pubSubRunner) Run(ctx context.Context) {
 //
 // In addition to the data channel, it returns a done channel, which signals when the runner has closed.
 // It spawns a goroutine to manage the fanout. The publisher channel is unbuffered, therefore it is throttled by the slowest subscriber.
-func RunPubSub(ctx context.Context, subscribers ...chan<- string) (chan<- string, <-chan struct{}) {
-	publisher := make(chan string)
-	ps := pubSubRunner{
+func RunPubSub[T any](ctx context.Context, subscribers ...chan<- T) (chan<- T, <-chan struct{}) {
+	publisher := make(chan T)
+	ps := pubSubRunner[T]{
 		Publisher:   publisher,
 		Subscribers: subscribers,
 	}
