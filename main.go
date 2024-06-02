@@ -12,23 +12,21 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	subCh1 := make(chan string)
-	subCh2 := make(chan string)
-	pubCh, doneCh := pubsub.RunPubSub(ctx, subCh1, subCh2)
+	ps := &pubsub.Router{}
 
 	// Use the WaitGroup so make sure we don't exit the binary until the subscribers have successfully processed any context cancellation signal.
 	wg := sync.WaitGroup{}
 
 	// Listen for messages
 	wg.Add(1)
-	go func(ctx context.Context) {
+	ps.Subscribe(func(ch <-chan string) {
 		defer wg.Done()
 		for {
 			select {
-			case msg := <-subCh1:
+			case msg := <-ch:
 				log.Printf("Received message on sub1: %q", msg)
 			case <-ctx.Done():
 				log.Printf("Exiting listener 1: %v", ctx.Err())
@@ -36,48 +34,55 @@ func main() {
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
-	}(ctx)
+	})
 
 	// Listen for messages
 	wg.Add(1)
-	go func(ctx context.Context) {
+	ps.Subscribe(func(ch <-chan string) {
 		defer wg.Done()
+		time.Sleep(100 * time.Millisecond)
 		select {
-		case msg := <-subCh2:
+		case msg := <-ch:
 			log.Printf("Received message on sub2: %q", msg)
 		case <-ctx.Done():
 			log.Printf("Exiting listener 2: %v", ctx.Err())
 			return
 		}
+		log.Printf("Spawning nested listener")
+		wg.Add(1)
+		ps.Subscribe(func(ch <-chan string) {
+			wg.Done()
+			time.Sleep(100 * time.Millisecond)
+			select {
+			case msg := <-ch:
+				log.Printf("Received message on nested subscriber: %q", msg)
+			case <-ctx.Done():
+				log.Printf("Exiting nested listener: %v", ctx.Err())
+				return
+			}
+		})
 		// Return after the first message is received.
-		// We see that this breaks the other subscriber,
-		// which is probably not the behavior we want
-	}(ctx)
+		// This no longer breaks the other subscriber,
+		log.Printf("Exiting listener 2.")
+	})
 
 	// Publish the messages
 	messages := []string{
 		"foo", "bar", "baz", "abc", "def",
 	}
-PublishLoop:
 	for i, msg := range messages {
 		log.Printf("Sending message %d...", i)
-		select {
-		// Channel writing can be a branch of a select as well as channel reading.
-		case pubCh <- msg:
-		case <-ctx.Done():
-			log.Printf("Canceling channel write: %v", ctx.Err())
-			break PublishLoop
+		// Unlike with the runner implementation, ps.Publish blocks until all (unbuffered) fanout channels have been written to.
+		if err := ps.Publish(ctx, msg); err != nil {
+			log.Printf("Canceling publisher loop: %v", err)
+			break
 		}
 	}
 
 	// In order to wait long enough to properly process all messages:
-	// 1. Close the publish channel. This signals the publisher to return as long as it's not still in the middle of its fanout loop.
-	// 2. Read from the PubSub done channel. This is how we know that no fanout loops are ongoing.
-	// 3. Cancel the context. This causes the listeners to return.
-	// 4. Wait for the WaitGroup, which signals that the listeners have processed any messages they are going to process.
-	// Phew, that's an involved dance! Is there a better way, besides the router style?
-	close(pubCh)
-	<-doneCh
+	// 1. Cancel the context.
+	// 2. Wait for the subscribers to process that cancelled context. This is doable with wg.Wait()
+	// Much easier than with the runner style. This is because ps.Publish blocks until fanout is complete.
 	cancel()
 	wg.Wait()
 }
